@@ -1,0 +1,16 @@
+[Unit]
+Description=Instagram Samples to Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/home/YOUR_USERNAME/instagram-samples-bot
+ExecStart=/home/YOUR_USERNAME/instagram-samples-bot/venv/bin/python3 /home/YOUR_USERNAME/instagram-samples-bot/instagram_samples_bot.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/YOUR_USERNAME/instagram-samples-bot/service.log
+StandardError=append:/home/YOUR_USERNAME/instagram-samples-bot/service.log
+
+[Install]
+WantedBy=multi-user.target
