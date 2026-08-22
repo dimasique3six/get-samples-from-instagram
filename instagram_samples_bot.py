@@ -18,12 +18,12 @@ import telegram
 import asyncio
 
 # ===== КОНФИГУРАЦИЯ =====
-INSTAGRAM_USERNAME = "ваш_логин_инстаграм"
-INSTAGRAM_PASSWORD = "ваш_пароль_инстаграм"
-INSTAGRAM_THREAD_ID = "340282366841710301281176539621804876514"
+INSTAGRAM_USERNAME = "dimonpoimi"
+INSTAGRAM_PASSWORD = "********"
+INSTAGRAM_THREAD_ID = "340282366841710301281153109523700352417"
 
-TELEGRAM_BOT_TOKEN = "ВАШ_ТОКЕН_БОТА"
-TELEGRAM_CHANNEL_ID = "-100XXXXXXXXXX"  # ID канала (должен начинаться с -100)
+TELEGRAM_BOT_TOKEN = "********"
+TELEGRAM_CHANNEL_ID = "-1003405745490"  # ID канала (должен начинаться с -100)
 
 CHECK_INTERVAL = 60  # Проверка каждые 60 секунд
 DOWNLOAD_DIR = "./downloads"
@@ -32,7 +32,7 @@ SESSION_FILE = "./instagram_session.json"
 
 # ===== НАСТРОЙКА ЛОГИРОВАНИЯ =====
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # Включаем подробное логирование
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('samples_bot.log'),
@@ -48,7 +48,6 @@ class InstagramSamplesBot:
         self.ig_client.delay_range = [1, 3]
         self.tg_bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
         self.processed_messages = self.load_state()
-        self.first_run = len(self.processed_messages) == 0
         
         # Создаём директорию для загрузок
         Path(DOWNLOAD_DIR).mkdir(exist_ok=True)
@@ -58,26 +57,31 @@ class InstagramSamplesBot:
         if os.path.exists(STATE_FILE):
             try:
                 with open(STATE_FILE, 'r') as f:
-                    return set(json.load(f))
-            except:
+                    data = json.load(f)
+                    logger.info(f"📂 Загружено {len(data)} обработанных сообщений из файла")
+                    return set(data)
+            except Exception as e:
+                logger.error(f"Ошибка загрузки state.json: {e}")
                 return set()
+        logger.info("📂 Файл state.json не найден - это первый запуск")
         return set()
     
     def save_state(self):
         """Сохраняет состояние обработанных сообщений"""
         with open(STATE_FILE, 'w') as f:
             json.dump(list(self.processed_messages), f)
+        logger.debug(f"💾 Сохранено {len(self.processed_messages)} сообщений в state.json")
     
     def login_instagram(self):
         """Авторизация в Instagram с сохранением сессии"""
         try:
             if os.path.exists(SESSION_FILE):
-                logger.info("Загружаем сохранённую сессию Instagram...")
+                logger.info("📱 Загружаем сохранённую сессию Instagram...")
                 self.ig_client.load_settings(SESSION_FILE)
                 self.ig_client.login(INSTAGRAM_USERNAME, INSTAGRAM_PASSWORD)
                 logger.info("✓ Вход через сохранённую сессию выполнен")
             else:
-                logger.info("Выполняем первый вход в Instagram...")
+                logger.info("📱 Выполняем первый вход в Instagram...")
                 self.ig_client.login(INSTAGRAM_USERNAME, INSTAGRAM_PASSWORD)
                 self.ig_client.dump_settings(SESSION_FILE)
                 logger.info("✓ Первый вход выполнен, сессия сохранена")
@@ -85,17 +89,17 @@ class InstagramSamplesBot:
             return True
             
         except LoginRequired:
-            logger.error("Требуется повторная авторизация")
+            logger.error("❌ Требуется повторная авторизация")
             if os.path.exists(SESSION_FILE):
                 os.remove(SESSION_FILE)
             return False
             
         except PleaseWaitFewMinutes:
-            logger.warning("Instagram просит подождать несколько минут")
+            logger.warning("⚠️ Instagram просит подождать несколько минут")
             return False
             
         except Exception as e:
-            logger.error(f"Ошибка входа в Instagram: {e}")
+            logger.error(f"❌ Ошибка входа в Instagram: {e}")
             return False
     
     def get_new_messages(self):
@@ -112,53 +116,80 @@ class InstagramSamplesBot:
             )
             
             if 'thread' not in result or 'items' not in result['thread']:
+                logger.warning("⚠️ В ответе API нет 'thread' или 'items'")
                 return []
             
             messages_data = result['thread']['items']
+            logger.info(f"📨 API вернул {len(messages_data)} сообщений из чата")
+            
             new_messages = []
             
-            for msg_data in messages_data:
+            for idx, msg_data in enumerate(messages_data):
                 msg_id = msg_data.get('item_id')
+                item_type = msg_data.get('item_type')
+                user_id = msg_data.get('user_id')
                 
-                if msg_id and msg_id not in self.processed_messages:
-                    class SimpleMessage:
-                        def __init__(self, data):
-                            self.id = data.get('item_id')
-                            self.user_id = data.get('user_id')
-                            self.text = data.get('text', '')
-                            self.item_type = data.get('item_type')
+                logger.debug(f"  [{idx+1}] ID: {msg_id}, Type: {item_type}, User: {user_id}")
+                
+                # Проверяем, обработано ли уже
+                if msg_id in self.processed_messages:
+                    logger.debug(f"      ↳ Уже обработано, пропускаем")
+                    continue
+                
+                logger.info(f"  ✓ Новое сообщение [{idx+1}]: ID={msg_id}, Type={item_type}")
+                
+                # Создаём упрощённый объект сообщения
+                class SimpleMessage:
+                    def __init__(self, data):
+                        self.id = data.get('item_id')
+                        self.user_id = data.get('user_id')
+                        self.text = data.get('text', '')
+                        self.item_type = data.get('item_type')
+                        
+                        # Проверяем clip
+                        self.clip = None
+                        if 'clip' in data and data['clip']:
+                            clip_data = data['clip']['clip']
+                            clip_id = clip_data.get('id', '').split('_')[0] if clip_data.get('id') else None
+                            self.clip = type('obj', (object,), {'id': clip_id})()
+                            logger.info(f"      ↳ 🎥 Найден CLIP! ID: {clip_id}")
+                        
+                        # Проверяем media_share
+                        self.media_share = None
+                        if 'media_share' in data and data['media_share']:
+                            media = data['media_share']
+                            media_id = media.get('id', '').split('_')[0] if media.get('id') else None
+                            media_type = media.get('media_type')
+                            product_type = media.get('product_type')
+                            caption_text = media.get('caption', {}).get('text', '') if media.get('caption') else ''
                             
-                            # Проверяем clip
-                            self.clip = None
-                            if 'clip' in data and data['clip']:
-                                clip_data = data['clip']['clip']
-                                self.clip = type('obj', (object,), {
-                                    'id': clip_data.get('id', '').split('_')[0] if clip_data.get('id') else None
-                                })()
-                            
-                            # Проверяем media_share
-                            self.media_share = None
-                            if 'media_share' in data and data['media_share']:
-                                media = data['media_share']
-                                self.media_share = type('obj', (object,), {
-                                    'id': media.get('id', '').split('_')[0] if media.get('id') else None,
-                                    'media_type': media.get('media_type'),
-                                    'product_type': media.get('product_type'),
-                                    'caption_text': media.get('caption', {}).get('text', '') if media.get('caption') else ''
-                                })()
-                    
-                    new_messages.append(SimpleMessage(msg_data))
+                            self.media_share = type('obj', (object,), {
+                                'id': media_id,
+                                'media_type': media_type,
+                                'product_type': product_type,
+                                'caption_text': caption_text
+                            })()
+                            logger.info(f"      ↳ 📹 Найден MEDIA_SHARE! ID: {media_id}, Type: {media_type}, Product: {product_type}")
+                
+                new_messages.append(SimpleMessage(msg_data))
+            
+            if new_messages:
+                logger.info(f"🆕 Найдено {len(new_messages)} НОВЫХ необработанных сообщений")
+            else:
+                logger.debug("   Все сообщения уже обработаны")
             
             return new_messages
             
         except Exception as e:
-            logger.error(f"Ошибка получения сообщений: {e}")
+            logger.error(f"❌ Ошибка получения сообщений: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return []
     
     def download_sample_direct(self, media_id, output_path):
         """Скачивает сэмпл напрямую через API Instagram"""
         try:
-            logger.info(f"Скачиваем сэмпл через API...")
+            logger.info(f"⬇️ Скачиваем сэмпл через API...")
             
             if '_' in str(media_id):
                 media_pk = str(media_id).split('_')[0]
@@ -168,7 +199,7 @@ class InstagramSamplesBot:
             result = self.ig_client.private_request(f"media/{media_pk}/info/")
             
             if 'items' not in result or len(result['items']) == 0:
-                logger.warning(f"Медиа не найдено: {media_pk}")
+                logger.warning(f"⚠️ Медиа не найдено: {media_pk}")
                 return None
             
             media_data = result['items'][0]
@@ -178,10 +209,10 @@ class InstagramSamplesBot:
                 video_url = media_data['video_versions'][0]['url']
             
             if not video_url:
-                logger.warning(f"URL видео не найден для {media_pk}")
+                logger.warning(f"⚠️ URL видео не найден для {media_pk}")
                 return None
             
-            logger.info(f"Найден video URL, скачиваем...")
+            logger.info(f"   Найден video URL, скачиваем...")
             
             import requests
             cookies = {cookie.name: cookie.value for cookie in self.ig_client.private.cookies}
@@ -197,13 +228,14 @@ class InstagramSamplesBot:
                     f.write(chunk)
             
             if os.path.exists(output_path):
-                logger.info(f"✓ Сэмпл скачан: {output_path}")
+                size_mb = os.path.getsize(output_path) / 1024 / 1024
+                logger.info(f"✓ Сэмпл скачан: {output_path} ({size_mb:.2f} MB)")
                 return output_path
             
             return None
             
         except Exception as e:
-            logger.error(f"Ошибка прямого скачивания: {e}")
+            logger.error(f"❌ Ошибка прямого скачивания: {e}")
             return None
     
     def download_sample_ytdlp(self, media_id, output_path):
@@ -217,7 +249,7 @@ class InstagramSamplesBot:
             code = self.ig_client.media_code_from_pk(int(media_pk))
             reel_url = f"https://www.instagram.com/reel/{code}/"
             
-            logger.info(f"Скачиваем через yt-dlp: {reel_url}")
+            logger.info(f"⬇️ Скачиваем через yt-dlp: {reel_url}")
             
             cookies_file = f"{DOWNLOAD_DIR}/cookies.txt"
             with open(cookies_file, 'w') as f:
@@ -248,13 +280,14 @@ class InstagramSamplesBot:
                 pass
             
             if result.returncode == 0 and os.path.exists(output_path):
-                logger.info(f"✓ Сэмпл скачан через yt-dlp: {output_path}")
+                size_mb = os.path.getsize(output_path) / 1024 / 1024
+                logger.info(f"✓ Сэмпл скачан через yt-dlp: {output_path} ({size_mb:.2f} MB)")
                 return output_path
             
             return None
             
         except Exception as e:
-            logger.error(f"Ошибка yt-dlp: {e}")
+            logger.error(f"❌ Ошибка yt-dlp: {e}")
             return None
     
     def download_sample(self, media_id):
@@ -267,17 +300,18 @@ class InstagramSamplesBot:
             return result
         
         # Метод 2: Через yt-dlp
-        logger.info("Прямое скачивание не удалось, пробуем yt-dlp...")
+        logger.info("⚠️ Прямое скачивание не удалось, пробуем yt-dlp...")
         result = self.download_sample_ytdlp(media_id, output_path)
         if result:
             return result
         
-        logger.error(f"Не удалось скачать сэмпл {media_id}")
+        logger.error(f"❌ Не удалось скачать сэмпл {media_id} ни одним методом")
         return None
     
     async def send_to_channel_async(self, video_path, caption=""):
         """Отправляет сэмпл в канал Telegram (асинхронная версия)"""
         try:
+            logger.info(f"📤 Отправляем сэмпл в канал {TELEGRAM_CHANNEL_ID}...")
             with open(video_path, 'rb') as video:
                 await self.tg_bot.send_video(
                     chat_id=TELEGRAM_CHANNEL_ID,
@@ -287,10 +321,12 @@ class InstagramSamplesBot:
                     read_timeout=60,
                     write_timeout=60
                 )
-            logger.info(f"✓ Сэмпл опубликован в канале")
+            logger.info(f"✅ Сэмпл опубликован в канале!")
             return True
         except Exception as e:
-            logger.error(f"Ошибка отправки в канал: {e}")
+            logger.error(f"❌ Ошибка отправки в канал: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
     
     def send_to_channel(self, video_path, caption=""):
@@ -299,7 +335,7 @@ class InstagramSamplesBot:
             # Проверяем размер файла (Telegram лимит 50MB)
             file_size = os.path.getsize(video_path)
             if file_size > 50 * 1024 * 1024:
-                logger.warning(f"Файл слишком большой ({file_size / 1024 / 1024:.2f} MB)")
+                logger.warning(f"⚠️ Файл слишком большой ({file_size / 1024 / 1024:.2f} MB)")
                 return False
             
             # Получаем или создаём event loop
@@ -316,7 +352,7 @@ class InstagramSamplesBot:
             return loop.run_until_complete(self.send_to_channel_async(video_path, caption))
             
         except Exception as e:
-            logger.error(f"Ошибка отправки в Telegram: {e}")
+            logger.error(f"❌ Ошибка отправки в Telegram: {e}")
             return False
     
     def get_sender_name(self, sender_id):
@@ -334,7 +370,10 @@ class InstagramSamplesBot:
             sender = message.user_id
             sender_name = self.get_sender_name(sender)
             
-            logger.info(f"🎵 Обрабатываем сообщение от @{sender_name}")
+            logger.info(f"\n{'='*60}")
+            logger.info(f"🎵 ОБРАБАТЫВАЕМ СООБЩЕНИЕ от @{sender_name}")
+            logger.info(f"   ID: {msg_id}")
+            logger.info(f"   Type: {message.item_type}")
             
             media_id = None
             caption_text = ""
@@ -342,16 +381,19 @@ class InstagramSamplesBot:
             if message.clip:
                 media_id = message.clip.id
                 caption_text = message.text or ""
-                logger.info(f"Найден сэмпл (clip): {media_id}")
+                logger.info(f"   ✓ Это CLIP (reel)! Media ID: {media_id}")
                 
             elif message.media_share:
                 media = message.media_share
                 if media.media_type == 2 and media.product_type == "clips":
                     media_id = media.id
                     caption_text = media.caption_text or ""
-                    logger.info(f"Найден сэмпл (media_share): {media_id}")
+                    logger.info(f"   ✓ Это MEDIA_SHARE (reel)! Media ID: {media_id}")
+                else:
+                    logger.info(f"   ⚠️ Это media_share, но НЕ reel (type={media.media_type}, product={media.product_type})")
             
             if media_id:
+                logger.info(f"   📥 Начинаем скачивание...")
                 video_path = self.download_sample(media_id)
                 
                 if video_path and os.path.exists(video_path):
@@ -360,25 +402,37 @@ class InstagramSamplesBot:
                     if caption_text:
                         caption += f"\n\n{caption_text[:300]}"
                     
+                    logger.info(f"   Подпись: {caption[:100]}...")
+                    
                     # Публикуем в канале
                     if self.send_to_channel(video_path, caption):
                         try:
                             os.remove(video_path)
+                            logger.info(f"   🗑️ Временный файл удалён")
                         except:
                             pass
                         
                         self.processed_messages.add(msg_id)
                         self.save_state()
+                        logger.info(f"✅ СООБЩЕНИЕ УСПЕШНО ОБРАБОТАНО")
+                        logger.info(f"{'='*60}\n")
                         return True
+                else:
+                    logger.error(f"   ❌ Не удалось скачать видео")
             else:
-                logger.info(f"Сообщение не содержит сэмпл, пропускаем")
+                logger.info(f"   ⚠️ Сообщение НЕ содержит reel, пропускаем")
             
+            # Помечаем как обработанное в любом случае
             self.processed_messages.add(msg_id)
             self.save_state()
+            logger.info(f"{'='*60}\n")
             return False
             
         except Exception as e:
-            logger.error(f"Ошибка обработки сообщения: {e}")
+            logger.error(f"❌ Ошибка обработки сообщения: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            # Помечаем как обработанное, чтобы не зависнуть
             self.processed_messages.add(message.id)
             self.save_state()
             return False
@@ -397,27 +451,6 @@ class InstagramSamplesBot:
             logger.error("❌ Не удалось войти в Instagram")
             return
         
-        # При первом запуске помечаем все существующие сообщения
-        if self.first_run:
-            logger.info("🔄 Первый запуск: помечаем существующие сообщения...")
-            try:
-                result = self.ig_client.private_request(
-                    f"direct_v2/threads/{INSTAGRAM_THREAD_ID}/",
-                    params={"limit": "100"}
-                )
-                
-                if 'thread' in result and 'items' in result['thread']:
-                    for msg in result['thread']['items']:
-                        if 'item_id' in msg:
-                            self.processed_messages.add(msg['item_id'])
-                    
-                    self.save_state()
-                    logger.info(f"✓ Помечено {len(self.processed_messages)} сообщений")
-            except Exception as e:
-                logger.error(f"Ошибка инициализации: {e}")
-            
-            self.first_run = False
-        
         consecutive_errors = 0
         max_errors = 5
         
@@ -428,7 +461,7 @@ class InstagramSamplesBot:
                 new_messages = self.get_new_messages()
                 
                 if new_messages:
-                    logger.info(f"📬 Найдено новых сообщений: {len(new_messages)}")
+                    logger.info(f"\n🎯 ОБРАБАТЫВАЕМ {len(new_messages)} новых сообщений:")
                     
                     for message in reversed(new_messages):
                         self.process_message(message)
@@ -437,12 +470,14 @@ class InstagramSamplesBot:
                 consecutive_errors = 0
                 
             except LoginRequired:
-                logger.warning("⚠️  Требуется повторная авторизация")
+                logger.warning("⚠️ Требуется повторная авторизация")
                 if not self.login_instagram():
                     consecutive_errors += 1
                     
             except Exception as e:
                 logger.error(f"❌ Ошибка в основном цикле: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
                 consecutive_errors += 1
             
             if consecutive_errors >= max_errors:
@@ -460,3 +495,5 @@ if __name__ == "__main__":
         logger.info("\n\n⛔ Остановка бота (Ctrl+C)")
     except Exception as e:
         logger.error(f"💀 Критическая ошибка: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
